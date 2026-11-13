@@ -59,10 +59,13 @@ jobs:
           python3 -u reporter.py --pot "$POT" --token "$TOKEN" --reporter "$REPORTER" \
             --state state/cursor.json --max-runtime "$MAX_RUNTIME" $DRY
 
-      - name: Save the cursor
+      - name: Delete the key
         if: always()
+        run: rm -f ~/.near-credentials/mainnet/$REPORTER.json
+
+      - name: Save the cursor (real runs only)
+        if: always() && !inputs.dry_run
         run: |
-          rm -f ~/.near-credentials/mainnet/$REPORTER.json
           git config user.name "last-reporter-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add state/cursor.json
