@@ -1,0 +1,69 @@
+name: $LAST reporter
+
+# Runs the $LAST reporter bot for ~5h45 every 6 hours, so it is (almost) always on.
+# It resumes from state/cursor.json, which each run commits back when it stops.
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (sign nothing)"
+        type: boolean
+        default: false
+      max_runtime:
+        description: "Run time in seconds"
+        default: "20700"
+
+concurrency:
+  group: last-reporter
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  POT: pot.heavycat9990.near
+  TOKEN: last-2.nearlytrade.near
+  REPORTER: heavycat9990.near
+  NEAR_CLI_VERSION: v0.31.1
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install near-cli-rs
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf "https://github.com/near/near-cli-rs/releases/download/${NEAR_CLI_VERSION}/near-cli-rs-installer.sh" | sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Load the restricted reporter key (record_buy / settle_round only)
+        env:
+          PRIVATE_KEY: ${{ secrets.REPORTER_PRIVATE_KEY }}
+          PUBLIC_KEY: ${{ secrets.REPORTER_PUBLIC_KEY }}
+        run: |
+          if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ]; then echo "Missing REPORTER_PRIVATE_KEY / REPORTER_PUBLIC_KEY secrets"; exit 1; fi
+          mkdir -p ~/.near-credentials/mainnet
+          umask 077
+          printf '{"account_id":"%s","public_key":"%s","private_key":"%s"}' "$REPORTER" "$PUBLIC_KEY" "$PRIVATE_KEY" > ~/.near-credentials/mainnet/$REPORTER.json
+
+      - name: Run the reporter
+        env:
+          DRY: ${{ inputs.dry_run && '--dry-run' || '' }}
+          MAX_RUNTIME: ${{ inputs.max_runtime || '20700' }}
+        run: |
+          near --version
+          python3 -u reporter.py --pot "$POT" --token "$TOKEN" --reporter "$REPORTER" \
+            --state state/cursor.json --max-runtime "$MAX_RUNTIME" $DRY
+
+      - name: Save the cursor
+        if: always()
+        run: |
+          rm -f ~/.near-credentials/mainnet/$REPORTER.json
+          git config user.name "last-reporter-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/cursor.json
+          git diff --cached --quiet || (git commit -m "state: reporter cursor" && git push)
